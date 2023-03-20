@@ -1,78 +1,70 @@
-const net = require('net');
+const createNode = require('./src');
+const EventEmitter = require('events');
 
-// Define the port number for the network
-const PORT = 8080;
+const randomItem = (c) => c[Math.floor(Math.random() * c.length)];
 
-// Define an array to store the addresses of other nodes in the network
-const nodeAddresses = [];
+// First, we see what port we should run the node at
+const port = Number(process.argv[2]);
 
-// Create a server to listen for incoming connections from other nodes
-const server = net.createServer(socket => {
-  console.log('Node connected:', socket.remoteAddress);
-  
-  // Add the node's address to the list of node addresses
-  nodeAddresses.push(socket.remoteAddress);
+if (isNaN(port)) {
+  console.log('Port not defined. Call like "node examples/chat.js PORT"');
+  return;
+}
 
-  // Listen for data (messages) from the connected node
-  socket.on('data', data => {
-    console.log(`Received message from ${socket.remoteAddress}: ${data}`);
-    
-    // Forward the message to all other nodes in the network
-    nodeAddresses.forEach(address => {
-      // Don't send the message back to the original sender
-      if (address !== socket.remoteAddress) {
-        const forwardSocket = net.createConnection({ port: PORT, host: address });
-        forwardSocket.write(data);
-        forwardSocket.end();
-      }
-    });
+// After that we create the node, run it and let user
+// know how to connect to other nodes and send messages
+const node = createNode();
+const emitter = new EventEmitter();
+let name = randomItem(['Gorgeous', 'Elegant', 'Phantastic', 'Smart']) + ' ' + randomItem(['pine', 'oak', 'spruce']) + ' from ' + randomItem(['Paris', 'Berlin', 'Belgrade', 'Ljubljana']);
+
+// Start local node and print help
+node.listen(port, () => {
+  console.log(`Chat node is up at port ${port}.`);
+  console.log(``);
+  console.log(`Write "connect IP:PORT" to connect to other nodes.`);
+  console.log(`Write "name NAME" to change your name.`);
+  console.log(`Type anything else to send it to everyone on the network`);
+  console.log(``);
+  console.log(`Your name is "${name}"`);
+
+  // node.on('connect', ({ nodeId }) => {
+  //   console.log(`New node connected: ${nodeId}`);
+  // });
+  //
+  // node.on('disconnect', ({nodeId}) => {
+  //   console.log(`Node disconnected: ${nodeId}`);
+  // });
+
+  node.on('broadcast', ({ message: { name, text } }) => {
+    console.log(`${name}: ${text}`);
   });
 
-  // Listen for the node to disconnect
-  socket.on('end', () => {
-    console.log('Node disconnected:', socket.remoteAddress);
-    
-    // Remove the node's address from the list of node addresses
-    const index = nodeAddresses.indexOf(socket.remoteAddress);
-    if (index > -1) {
-      nodeAddresses.splice(index, 1);
+  process.stdin.on('data', (data) => {
+    const text = data.toString().trim();
+
+    if (text.startsWith('connect')) {
+      const [,ipport] = text.split(' ');
+      const [ip, port] = ipport.split(':');
+
+      console.log(`Connecting to ${ip} at ${Number(port)}...`);
+      node.connect(ip, Number(port), () => {
+        console.log(`Connection to ${ip} established.`);
+      });
+    } else if (text.startsWith('name')) {
+      [,name] = text.split(' ');
+      console.log(`Name changed to "${name}"`);
+    } else {
+      node.broadcast({ name, text });
+      console.log(`${"\033[F"}You: ${text}`);
     }
   });
 });
 
-// Start the server to listen for incoming connections
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+// Handle CTRL C to gracefully shut everything down
+process.on('SIGINT', async () => {
+  console.log("\nGracefully shutting chat node down...");
+
+  node.close(() => {
+    process.exit();
+  });
 });
-
-// Connect to other nodes in the network
-const connectToNode = address => {
-  const socket = net.createConnection({ port: PORT, host: address });
-
-  // Listen for data (messages) from the connected node
-  socket.on('data', data => {
-    console.log(`Received message from ${address}: ${data}`);
-  });
-
-  // Listen for the connection to close
-  socket.on('close', () => {
-    console.log(`Disconnected from ${address}`);
-  });
-
-  // Handle errors
-  socket.on('error', error => {
-    console.error(`Error connecting to ${address}: ${error}`);
-  });
-};
-
-// Example usage: connect to two nodes and send a message
-connectToNode('192.168.0.187');
-
-setTimeout(() => {
-  const message = 'Hello, world!';
-  nodeAddresses.forEach(address => {
-    const socket = net.createConnection({ port: PORT, host: address });
-    socket.write(message);
-    socket.end();
-  });
-}, 1000);
